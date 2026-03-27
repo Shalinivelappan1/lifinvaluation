@@ -12,7 +12,7 @@ st.title("📊 Fintech Valuation Simulator (DCF + ML + Monte Carlo)")
 # -----------------------------
 st.sidebar.header("Model Inputs")
 
-years = st.sidebar.slider("Projection Years", 3, 10, 5)
+years = st.sidebar.slider("Projection Years", 3, 15, 5)
 
 # DCF Inputs
 initial_fcf = st.sidebar.number_input("Initial FCF", value=1000.0)
@@ -27,7 +27,7 @@ fcf_input = st.sidebar.text_input(
     "500,700,900,1200"
 )
 
-damping = st.sidebar.slider("ML Damping Factor (λ)", 0.6, 1.0, 0.85)
+damping = st.sidebar.slider("ML Damping Factor (λ)", 0.6, 1.0, 0.80)
 
 # Monte Carlo
 simulations = st.sidebar.slider("Monte Carlo Runs", 100, 3000, 500)
@@ -45,14 +45,15 @@ def dcf_valuation(fcf, growth, wacc, terminal_growth, years):
         fcf = fcf * (1 + growth)
         cashflows.append(fcf / ((1 + wacc) ** t))
 
-    terminal_value = (fcf * (1 + terminal_growth)) / (wacc - terminal_growth)
+    # Slight stabilization for long horizons
+    terminal_value = (fcf * (1 + terminal_growth)) / (wacc - terminal_growth + 0.01)
     terminal_discounted = terminal_value / ((1 + wacc) ** years)
 
     return sum(cashflows) + terminal_discounted
 
 
-# CALIBRATED ML FUNCTION
-def ml_fcf_prediction(fcf_history, years, damping, dcf_growth):
+# ✅ FIXED ML FUNCTION (WITH CONVERGENCE)
+def ml_fcf_prediction(fcf_history, years, damping, dcf_growth, terminal_growth):
     growth_rates = []
 
     for i in range(1, len(fcf_history)):
@@ -62,18 +63,19 @@ def ml_fcf_prediction(fcf_history, years, damping, dcf_growth):
 
     base_growth = np.mean(growth_rates)
 
-    # 🔴 Cap excessive growth
+    # Cap excessive growth
     base_growth = min(base_growth, 0.25)
 
-    # 🔴 Blend ML + DCF growth
+    # Blend ML + DCF growth
     blended_growth = 0.5 * base_growth + 0.5 * dcf_growth
 
     predictions = []
     last_fcf = fcf_history[-1]
 
     for t in range(1, years + 1):
-        # 🔴 Stronger damping
-        adjusted_growth = blended_growth * (damping ** (t * 1.5))
+        # 🔥 KEY FIX: Converge toward terminal growth
+        adjusted_growth = terminal_growth + (blended_growth - terminal_growth) * (damping ** t)
+
         last_fcf = last_fcf * (1 + adjusted_growth)
         predictions.append(last_fcf)
 
@@ -95,7 +97,7 @@ def run_simulation(ml_predicted_fcf, wacc, terminal_growth, years, simulations, 
         noise = np.random.normal(0, volatility, len(ml_predicted_fcf))
         simulated_fcf = ml_predicted_fcf * (1 + noise)
 
-        terminal_value = (simulated_fcf[-1] * (1 + terminal_growth)) / (wacc - terminal_growth)
+        terminal_value = (simulated_fcf[-1] * (1 + terminal_growth)) / (wacc - terminal_growth + 0.01)
         terminal_discounted = terminal_value / ((1 + wacc) ** years)
 
         value = discounted_value(simulated_fcf, wacc) + terminal_discounted
@@ -122,11 +124,11 @@ st.subheader("📌 Base Valuation")
 dcf_val = dcf_valuation(initial_fcf, growth_rate, wacc, terminal_growth, years)
 
 ml_predicted_fcf, blended_growth = ml_fcf_prediction(
-    fcf_history, years, damping, growth_rate
+    fcf_history, years, damping, growth_rate, terminal_growth
 )
 
 # ML valuation WITH terminal value
-ml_terminal_value = (ml_predicted_fcf[-1] * (1 + terminal_growth)) / (wacc - terminal_growth)
+ml_terminal_value = (ml_predicted_fcf[-1] * (1 + terminal_growth)) / (wacc - terminal_growth + 0.01)
 ml_terminal_discounted = ml_terminal_value / ((1 + wacc) ** years)
 
 ml_val = discounted_value(ml_predicted_fcf, wacc) + ml_terminal_discounted
@@ -195,8 +197,8 @@ if run_button:
     - Downside risk (5th percentile): {p5:,.2f}
     - Upside potential (95th percentile): {p95:,.2f}
 
-    ML-based valuation is calibrated using growth caps, damping, and blending with DCF assumptions,
-    resulting in convergence toward traditional valuation estimates.
+    ML-based valuation converges toward DCF as growth stabilizes over time,
+    reflecting realistic long-term economic behavior.
     """)
 
 else:
