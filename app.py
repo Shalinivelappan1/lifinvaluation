@@ -26,7 +26,9 @@ decay = st.sidebar.slider("Growth Decay Factor", 0.7, 0.99, 0.85)
 st.sidebar.subheader("Capital Structure")
 debt = st.sidebar.number_input("Debt", value=2000.0)
 cash = st.sidebar.number_input("Cash", value=500.0)
-shares = st.sidebar.number_input("Shares (millions)", value=100.0)
+
+# 🔥 IMPORTANT: shares in MILLIONS
+shares_mn = st.sidebar.number_input("Shares Outstanding (millions)", value=100.0)
 
 # ML input
 st.sidebar.subheader("Historical Cash Flow Input")
@@ -39,7 +41,7 @@ volatility = st.sidebar.slider("Volatility (%)", 1, 30, 12) / 100
 run_button = st.sidebar.button("Run Simulation")
 
 # -----------------------------
-# CORE FUNCTIONS
+# CORE FUNCTIONS (EXCEL-ALIGNED)
 # -----------------------------
 
 def project_fcf(start_fcf, initial_growth, terminal_growth, years, decay):
@@ -59,7 +61,7 @@ def discounted_value(cashflows, wacc):
 
 
 def terminal_value(last_fcf, wacc, g, years):
-    tv = (last_fcf * (1 + g)) / (wacc - g)   # EXACT Excel formula
+    tv = (last_fcf * (1 + g)) / (wacc - g)  # EXACT Excel formula
     return tv / ((1 + wacc) ** years)
 
 
@@ -85,7 +87,7 @@ growth_rates = [
 ml_initial_growth = min(np.mean(growth_rates), 0.25)
 
 # -----------------------------
-# DCF
+# DCF MODEL
 # -----------------------------
 
 dcf_fcf = project_fcf(initial_fcf, growth_rate, terminal_growth, years, decay)
@@ -101,8 +103,10 @@ ml_val = discounted_value(ml_fcf, wacc)
 ml_val += terminal_value(ml_fcf[-1], wacc, terminal_growth, years)
 
 # -----------------------------
-# EQUITY + SHARE PRICE
+# EQUITY → SHARE PRICE (FIXED)
 # -----------------------------
+
+shares = shares_mn * 1_000_000  # 🔥 convert to actual shares
 
 dcf_eq = equity_value(dcf_val, debt, cash)
 ml_eq = equity_value(ml_val, debt, cash)
@@ -124,7 +128,7 @@ st.write(f"📊 Data-driven Initial Growth: {ml_initial_growth:.2%}")
 st.write(f"📉 Difference: {(dcf_price - ml_price)/dcf_price:.2%}")
 
 # -----------------------------
-# CASH FLOWS
+# CASH FLOW TABLE
 # -----------------------------
 
 st.subheader("📈 Projected Cash Flows")
@@ -164,7 +168,7 @@ def run_simulation():
         val += terminal_value(fcf_list[-1], wacc, terminal_growth, years)
 
         eq = equity_value(val, debt, cash)
-        price = eq / shares
+        price = eq / shares   # ✅ correct scaling
 
         vals.append(price)
 
@@ -190,5 +194,8 @@ if run_button:
     ax.axvline(mean)
     ax.axvline(p5)
     ax.axvline(p95)
+
+    ax.set_xlabel("Share Price")
+    ax.set_ylabel("Frequency")
 
     st.pyplot(fig)
