@@ -27,7 +27,7 @@ st.sidebar.subheader("Capital Structure")
 debt = st.sidebar.number_input("Debt", value=2000.0)
 cash = st.sidebar.number_input("Cash", value=500.0)
 
-# ✅ FIXED: NO MILLIONS
+# ✅ Simple units (NO millions confusion)
 shares = st.sidebar.number_input("Shares Outstanding", value=100.0)
 
 # ML input
@@ -41,7 +41,7 @@ volatility = st.sidebar.slider("Volatility (%)", 1, 30, 12) / 100
 run_button = st.sidebar.button("Run Simulation")
 
 # -----------------------------
-# CORE FUNCTIONS
+# CORE FUNCTIONS (EXCEL LOGIC)
 # -----------------------------
 
 def project_fcf(start_fcf, initial_growth, terminal_growth, years, decay):
@@ -87,7 +87,7 @@ growth_rates = [
 ml_initial_growth = min(np.mean(growth_rates), 0.25)
 
 # -----------------------------
-# DCF
+# DCF MODEL
 # -----------------------------
 
 dcf_fcf = project_fcf(initial_fcf, growth_rate, terminal_growth, years, decay)
@@ -140,7 +140,7 @@ df = pd.DataFrame({
 st.dataframe(df)
 
 # -----------------------------
-# MONTE CARLO (CORRECTED)
+# MONTE CARLO (FINAL FIXED)
 # -----------------------------
 
 @st.cache_data
@@ -157,7 +157,12 @@ def run_simulation():
             noise = np.random.normal(0, volatility)
 
             g_t = terminal_growth + (ml_initial_growth - terminal_growth) * (decay ** t)
-            g_t = g_t * (1 + noise)
+
+            # ✅ FINAL FIX: additive noise
+            g_t = g_t + noise
+
+            # ✅ stability bounds
+            g_t = np.clip(g_t, -0.2, 0.5)
 
             fcf = fcf * (1 + g_t)
             fcf_list.append(fcf)
