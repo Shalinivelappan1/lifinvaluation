@@ -51,7 +51,8 @@ def dcf_valuation(fcf, growth, wacc, terminal_growth, years):
     return sum(cashflows) + terminal_discounted
 
 
-def ml_fcf_prediction(fcf_history, years, damping):
+# CALIBRATED ML FUNCTION
+def ml_fcf_prediction(fcf_history, years, damping, dcf_growth):
     growth_rates = []
 
     for i in range(1, len(fcf_history)):
@@ -61,15 +62,22 @@ def ml_fcf_prediction(fcf_history, years, damping):
 
     base_growth = np.mean(growth_rates)
 
+    # 🔴 Cap excessive growth
+    base_growth = min(base_growth, 0.25)
+
+    # 🔴 Blend ML + DCF growth
+    blended_growth = 0.5 * base_growth + 0.5 * dcf_growth
+
     predictions = []
     last_fcf = fcf_history[-1]
 
     for t in range(1, years + 1):
-        adjusted_growth = base_growth * (damping ** t)
+        # 🔴 Stronger damping
+        adjusted_growth = blended_growth * (damping ** (t * 1.5))
         last_fcf = last_fcf * (1 + adjusted_growth)
         predictions.append(last_fcf)
 
-    return np.array(predictions), base_growth
+    return np.array(predictions), blended_growth
 
 
 def discounted_value(cashflows, wacc):
@@ -87,7 +95,6 @@ def run_simulation(ml_predicted_fcf, wacc, terminal_growth, years, simulations, 
         noise = np.random.normal(0, volatility, len(ml_predicted_fcf))
         simulated_fcf = ml_predicted_fcf * (1 + noise)
 
-        # include terminal value
         terminal_value = (simulated_fcf[-1] * (1 + terminal_growth)) / (wacc - terminal_growth)
         terminal_discounted = terminal_value / ((1 + wacc) ** years)
 
@@ -114,7 +121,9 @@ st.subheader("📌 Base Valuation")
 
 dcf_val = dcf_valuation(initial_fcf, growth_rate, wacc, terminal_growth, years)
 
-ml_predicted_fcf, base_growth = ml_fcf_prediction(fcf_history, years, damping)
+ml_predicted_fcf, blended_growth = ml_fcf_prediction(
+    fcf_history, years, damping, growth_rate
+)
 
 # ML valuation WITH terminal value
 ml_terminal_value = (ml_predicted_fcf[-1] * (1 + terminal_growth)) / (wacc - terminal_growth)
@@ -126,8 +135,8 @@ col1, col2 = st.columns(2)
 col1.metric("DCF Value", f"{dcf_val:,.2f}")
 col2.metric("ML-Based Value", f"{ml_val:,.2f}")
 
-# Show comparison insight
-st.write(f"📊 Implied ML Growth Rate: {base_growth:.2%}")
+# Insights
+st.write(f"📊 Blended ML Growth Rate: {blended_growth:.2%}")
 st.write(f"📉 DCF vs ML Difference: {(dcf_val - ml_val)/dcf_val:.2%}")
 
 # -----------------------------
@@ -186,8 +195,8 @@ if run_button:
     - Downside risk (5th percentile): {p5:,.2f}
     - Upside potential (95th percentile): {p95:,.2f}
 
-    ML-based valuation converges toward DCF when terminal value and damping are incorporated,
-    highlighting the importance of long-term assumptions in valuation.
+    ML-based valuation is calibrated using growth caps, damping, and blending with DCF assumptions,
+    resulting in convergence toward traditional valuation estimates.
     """)
 
 else:
