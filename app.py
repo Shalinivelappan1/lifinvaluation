@@ -2,7 +2,6 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from sklearn.linear_model import LinearRegression
 
 st.set_page_config(page_title="Fintech Valuation Simulator", layout="wide")
 
@@ -21,7 +20,7 @@ growth_rate = st.sidebar.slider("Growth Rate (%)", 0.0, 50.0, 20.0) / 100
 wacc = st.sidebar.slider("WACC (%)", 5.0, 20.0, 12.0) / 100
 terminal_growth = st.sidebar.slider("Terminal Growth (%)", 0.0, 10.0, 4.0) / 100
 
-# ML Input
+# ML-style input
 st.sidebar.subheader("ML Input (Historical FCF)")
 fcf_input = st.sidebar.text_input(
     "Enter past FCF values (comma separated)",
@@ -29,8 +28,10 @@ fcf_input = st.sidebar.text_input(
 )
 
 # Monte Carlo
-simulations = st.sidebar.slider("Monte Carlo Runs", 100, 5000, 1000)
+simulations = st.sidebar.slider("Monte Carlo Runs", 100, 3000, 500)
 volatility = st.sidebar.slider("Simulation Volatility (%)", 1, 30, 10) / 100
+
+run_button = st.sidebar.button("Run Simulation")
 
 # -----------------------------
 # FUNCTIONS
@@ -48,17 +49,25 @@ def dcf_valuation(fcf, growth, wacc, terminal_growth, years):
     return sum(cashflows) + terminal_discounted
 
 
+# ML-style projection (trend-based, lightweight)
 def ml_fcf_prediction(fcf_history, years):
-    X = np.arange(len(fcf_history)).reshape(-1, 1)
-    y = np.array(fcf_history)
+    growth_rates = []
 
-    model = LinearRegression()
-    model.fit(X, y)
+    for i in range(1, len(fcf_history)):
+        growth_rates.append(
+            (fcf_history[i] - fcf_history[i-1]) / fcf_history[i-1]
+        )
 
-    future_X = np.arange(len(fcf_history), len(fcf_history) + years).reshape(-1, 1)
-    predictions = model.predict(future_X)
+    avg_growth = np.mean(growth_rates)
 
-    return predictions
+    predictions = []
+    last_fcf = fcf_history[-1]
+
+    for _ in range(years):
+        last_fcf = last_fcf * (1 + avg_growth)
+        predictions.append(last_fcf)
+
+    return np.array(predictions)
 
 
 def discounted_value(cashflows, wacc):
@@ -66,6 +75,20 @@ def discounted_value(cashflows, wacc):
         cf / ((1 + wacc) ** (i + 1))
         for i, cf in enumerate(cashflows)
     ])
+
+
+@st.cache_data
+def run_simulation(ml_predicted_fcf, wacc, simulations, volatility):
+    results = []
+
+    for _ in range(simulations):
+        noise = np.random.normal(0, volatility, len(ml_predicted_fcf))
+        simulated_fcf = ml_predicted_fcf * (1 + noise)
+
+        value = discounted_value(simulated_fcf, wacc)
+        results.append(value)
+
+    return np.array(results)
 
 # -----------------------------
 # DATA PROCESSING
@@ -89,12 +112,11 @@ ml_predicted_fcf = ml_fcf_prediction(fcf_history, years)
 ml_val = discounted_value(ml_predicted_fcf, wacc)
 
 col1, col2 = st.columns(2)
-
 col1.metric("DCF Value", f"{dcf_val:,.2f}")
 col2.metric("ML-Based Value", f"{ml_val:,.2f}")
 
 # -----------------------------
-# SHOW ML FORECAST
+# ML FORECAST TABLE
 # -----------------------------
 
 st.subheader("📈 ML Forecasted Cash Flows")
@@ -107,59 +129,47 @@ df_ml = pd.DataFrame({
 st.dataframe(df_ml)
 
 # -----------------------------
-# MONTE CARLO SIMULATION
+# MONTE CARLO (RUN ON BUTTON)
 # -----------------------------
 
-st.subheader("🎲 Monte Carlo Simulation")
+if run_button:
+    st.subheader("🎲 Monte Carlo Simulation")
 
-results = []
+    results = run_simulation(ml_predicted_fcf, wacc, simulations, volatility)
 
-for _ in range(simulations):
-    noise = np.random.normal(0, volatility, years)
-    simulated_fcf = ml_predicted_fcf * (1 + noise)
+    mean_val = np.mean(results)
+    p5 = np.percentile(results, 5)
+    p95 = np.percentile(results, 95)
 
-    value = discounted_value(simulated_fcf, wacc)
-    results.append(value)
+    col3, col4, col5 = st.columns(3)
+    col3.metric("Mean Value", f"{mean_val:,.2f}")
+    col4.metric("5th Percentile", f"{p5:,.2f}")
+    col5.metric("95th Percentile", f"{p95:,.2f}")
 
-results = np.array(results)
+    # Histogram
+    st.subheader("📊 Valuation Distribution")
 
-mean_val = np.mean(results)
-p5 = np.percentile(results, 5)
-p95 = np.percentile(results, 95)
+    fig, ax = plt.subplots()
+    ax.hist(results, bins=40)
+    ax.axvline(mean_val)
+    ax.axvline(p5)
+    ax.axvline(p95)
 
-col3, col4, col5 = st.columns(3)
+    ax.set_xlabel("Valuation")
+    ax.set_ylabel("Frequency")
 
-col3.metric("Mean Value", f"{mean_val:,.2f}")
-col4.metric("5th Percentile", f"{p5:,.2f}")
-col5.metric("95th Percentile", f"{p95:,.2f}")
+    st.pyplot(fig)
 
-# -----------------------------
-# HISTOGRAM
-# -----------------------------
+    # Interpretation
+    st.subheader("🧠 Interpretation")
 
-st.subheader("📊 Valuation Distribution")
+    st.write(f"""
+    - Mean valuation: {mean_val:,.2f}
+    - Downside risk (5th percentile): {p5:,.2f}
+    - Upside potential (95th percentile): {p95:,.2f}
 
-fig, ax = plt.subplots()
-ax.hist(results, bins=40)
-ax.axvline(mean_val)
-ax.axvline(p5)
-ax.axvline(p95)
+    This reflects valuation uncertainty under stochastic cash flow scenarios.
+    """)
 
-ax.set_xlabel("Valuation")
-ax.set_ylabel("Frequency")
-
-st.pyplot(fig)
-
-# -----------------------------
-# INTERPRETATION
-# -----------------------------
-
-st.subheader("🧠 Interpretation")
-
-st.write(f"""
-- The **mean valuation** is {mean_val:,.2f}
-- There is downside risk up to {p5:,.2f}
-- Upside potential reaches {p95:,.2f}
-
-This reflects valuation uncertainty under stochastic cash flow scenarios.
-""")
+else:
+    st.info("Click 'Run Simulation' to generate Monte Carlo results.")
