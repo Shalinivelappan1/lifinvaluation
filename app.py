@@ -3,12 +3,12 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="Fintech Valuation Lab", layout="wide")
+st.set_page_config(page_title="Valuation Tool", layout="wide")
 
-st.title("📊 Fintech Valuation Lab (DCF + ML + Scenarios + Monte Carlo)")
+st.title("📊 Valuation Tool (DCF + Data-Driven + Scenarios)")
 
 # -----------------------------
-# SIDEBAR INPUTS
+# INPUTS
 # -----------------------------
 st.sidebar.header("Model Inputs")
 
@@ -16,21 +16,20 @@ years = st.sidebar.slider("Projection Years", 3, 15, 5)
 
 initial_fcf = st.sidebar.number_input("Initial FCF", value=950.0)
 
-growth_rate = st.sidebar.slider("Base Growth (%)", 0.0, 50.0, 18.0) / 100
-wacc = st.sidebar.slider("WACC (%)", 5.0, 20.0, 11.0) / 100
+growth_rate = st.sidebar.slider("Initial Growth (%)", 0.0, 50.0, 18.0) / 100
 terminal_growth = st.sidebar.slider("Terminal Growth (%)", 0.0, 10.0, 4.5) / 100
+wacc = st.sidebar.slider("WACC (%)", 5.0, 20.0, 11.0) / 100
+
+decay = st.sidebar.slider("Growth Decay Factor", 0.7, 0.99, 0.85)
 
 # Capital structure
-st.sidebar.subheader("Capital Structure")
 debt = st.sidebar.number_input("Debt", value=2000.0)
 cash = st.sidebar.number_input("Cash", value=500.0)
-shares = st.sidebar.number_input("Shares Outstanding (millions)", value=100.0)
+shares = st.sidebar.number_input("Shares (millions)", value=100.0)
 
 # ML input
 st.sidebar.subheader("Historical Cash Flow Input")
 fcf_input = st.sidebar.text_input("Enter past values", "450,650,900,1200")
-
-damping = st.sidebar.slider("Growth Damping (λ)", 0.6, 1.0, 0.85)
 
 # Monte Carlo
 simulations = st.sidebar.slider("Simulation Runs", 100, 3000, 500)
@@ -39,16 +38,16 @@ volatility = st.sidebar.slider("Volatility (%)", 1, 30, 12) / 100
 run_button = st.sidebar.button("Run Simulation")
 
 # -----------------------------
-# FUNCTIONS
+# CORE FUNCTION (EXCEL LOGIC)
 # -----------------------------
 
-def project_fcf(start_fcf, growth, terminal_growth, years, damping):
+def project_fcf(start_fcf, initial_growth, terminal_growth, years, decay):
     fcf_list = []
     current_fcf = start_fcf
 
     for t in range(1, years + 1):
-        adjusted_growth = terminal_growth + (growth - terminal_growth) * (damping ** t)
-        current_fcf = current_fcf * (1 + adjusted_growth)
+        g_t = terminal_growth + (initial_growth - terminal_growth) * (decay ** t)
+        current_fcf = current_fcf * (1 + g_t)
         fcf_list.append(current_fcf)
 
     return np.array(fcf_list)
@@ -59,7 +58,7 @@ def discounted_value(cashflows, wacc):
 
 
 def terminal_value(last_fcf, wacc, g, years):
-    tv = (last_fcf * (1 + g)) / (wacc - g + 0.01)
+    tv = (last_fcf * (1 + g)) / (wacc - g)
     return tv / ((1 + wacc) ** years)
 
 
@@ -68,8 +67,9 @@ def equity_value(firm_value, debt, cash):
 
 
 # -----------------------------
-# ML GROWTH
+# ML GROWTH (ONLY INITIAL VALUE)
 # -----------------------------
+
 try:
     fcf_history = list(map(float, fcf_input.split(",")))
 except:
@@ -79,68 +79,60 @@ except:
 growth_rates = [(fcf_history[i] - fcf_history[i-1]) / fcf_history[i-1]
                 for i in range(1, len(fcf_history))]
 
-base_growth = min(np.mean(growth_rates), 0.25)
-ml_growth = 0.5 * base_growth + 0.5 * growth_rate
+ml_initial_growth = min(np.mean(growth_rates), 0.25)
 
 # -----------------------------
-# SCENARIOS
+# DCF MODEL
 # -----------------------------
 
-scenarios = {
-    "Bear": growth_rate - 0.05,
-    "Base": growth_rate,
-    "Bull": growth_rate + 0.05
-}
-
-results_table = []
-
-st.subheader("📊 Scenario Valuation")
-
-for name, g in scenarios.items():
-
-    dcf_fcf = project_fcf(initial_fcf, g, terminal_growth, years, damping)
-    dcf_val = discounted_value(dcf_fcf, wacc)
-    dcf_val += terminal_value(dcf_fcf[-1], wacc, terminal_growth, years)
-
-    eq_val = equity_value(dcf_val, debt, cash)
-    price = eq_val / shares
-
-    results_table.append([name, dcf_val, eq_val, price])
-
-df_scenarios = pd.DataFrame(results_table, columns=[
-    "Scenario", "Firm Value", "Equity Value", "Share Price"
-])
-
-st.dataframe(df_scenarios)
-
-# -----------------------------
-# BASE MODEL OUTPUT
-# -----------------------------
-
-st.subheader("📌 Base Model (DCF vs ML)")
-
-# DCF
-dcf_fcf = project_fcf(initial_fcf, growth_rate, terminal_growth, years, damping)
+dcf_fcf = project_fcf(initial_fcf, growth_rate, terminal_growth, years, decay)
 dcf_val = discounted_value(dcf_fcf, wacc)
 dcf_val += terminal_value(dcf_fcf[-1], wacc, terminal_growth, years)
 
-# ML
-ml_fcf = project_fcf(initial_fcf, ml_growth, terminal_growth, years, damping)
+# -----------------------------
+# ML MODEL (SAME STRUCTURE)
+# -----------------------------
+
+ml_fcf = project_fcf(initial_fcf, ml_initial_growth, terminal_growth, years, decay)
 ml_val = discounted_value(ml_fcf, wacc)
 ml_val += terminal_value(ml_fcf[-1], wacc, terminal_growth, years)
 
-# Equity + Price
+# -----------------------------
+# EQUITY + SHARE PRICE
+# -----------------------------
+
 dcf_eq = equity_value(dcf_val, debt, cash)
 ml_eq = equity_value(ml_val, debt, cash)
 
 dcf_price = dcf_eq / shares
 ml_price = ml_eq / shares
 
+# -----------------------------
+# OUTPUT
+# -----------------------------
+
+st.subheader("📌 Valuation Results")
+
 col1, col2 = st.columns(2)
 col1.metric("DCF Share Price", f"{dcf_price:,.2f}")
-col2.metric("ML Share Price", f"{ml_price:,.2f}")
+col2.metric("Data-Driven Share Price", f"{ml_price:,.2f}")
 
-st.write(f"📊 ML Growth Rate: {ml_growth:.2%}")
+st.write(f"📊 Data-driven Initial Growth: {ml_initial_growth:.2%}")
+st.write(f"📉 Difference: {(dcf_price - ml_price)/dcf_price:.2%}")
+
+# -----------------------------
+# CASH FLOW TABLE
+# -----------------------------
+
+st.subheader("📈 Projected Cash Flows")
+
+df = pd.DataFrame({
+    "Year": range(1, years + 1),
+    "DCF FCF": dcf_fcf,
+    "Data-driven FCF": ml_fcf
+})
+
+st.dataframe(df)
 
 # -----------------------------
 # MONTE CARLO
@@ -166,7 +158,7 @@ def run_simulation(base_fcf):
 
 
 if run_button:
-    st.subheader("🎲 Monte Carlo (Share Price Distribution)")
+    st.subheader("🎲 Monte Carlo (Share Price)")
 
     results = run_simulation(ml_fcf)
 
@@ -175,9 +167,9 @@ if run_button:
     p95 = np.percentile(results, 95)
 
     col3, col4, col5 = st.columns(3)
-    col3.metric("Mean Price", f"{mean:.2f}")
-    col4.metric("Downside (5%)", f"{p5:.2f}")
-    col5.metric("Upside (95%)", f"{p95:.2f}")
+    col3.metric("Mean", f"{mean:.2f}")
+    col4.metric("Downside", f"{p5:.2f}")
+    col5.metric("Upside", f"{p95:.2f}")
 
     fig, ax = plt.subplots()
     ax.hist(results, bins=30)
@@ -186,5 +178,3 @@ if run_button:
     ax.axvline(p95)
 
     st.pyplot(fig)
-
-    st.write("This shows valuation uncertainty under different simulated conditions.")
