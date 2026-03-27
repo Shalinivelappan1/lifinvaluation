@@ -14,34 +14,45 @@ st.sidebar.header("Model Inputs")
 
 years = st.sidebar.slider("Projection Years", 3, 15, 5)
 
-initial_fcf = st.sidebar.number_input("Initial FCF", value=1000.0)
-growth_rate = st.sidebar.slider("DCF Growth Rate (%)", 0.0, 50.0, 20.0) / 100
-wacc = st.sidebar.slider("WACC (%)", 5.0, 20.0, 12.0) / 100
-terminal_growth = st.sidebar.slider("Terminal Growth (%)", 0.0, 10.0, 4.0) / 100
+# 🔥 Default realistic values (PB-like but generic)
+initial_fcf = st.sidebar.number_input("Initial FCF", value=950.0)
 
-# ML input
-st.sidebar.subheader("ML Input (Historical FCF)")
-fcf_input = st.sidebar.text_input("Enter past FCF values", "500,700,900,1200")
+growth_rate = st.sidebar.slider("Growth Rate (%)", 0.0, 50.0, 18.0) / 100
 
-damping = st.sidebar.slider("ML Damping Factor (λ)", 0.6, 1.0, 0.85)
+wacc = st.sidebar.slider("WACC (%)", 5.0, 20.0, 11.0) / 100
 
-simulations = st.sidebar.slider("Monte Carlo Runs", 100, 3000, 500)
-volatility = st.sidebar.slider("Simulation Volatility (%)", 1, 30, 10) / 100
+terminal_growth = st.sidebar.slider("Terminal Growth (%)", 0.0, 10.0, 4.5) / 100
+
+# ML Input
+st.sidebar.subheader("Historical Cash Flow Input")
+
+fcf_input = st.sidebar.text_input(
+    "Enter past values (comma separated)",
+    "450,650,900,1200"
+)
+
+damping = st.sidebar.slider("Growth Damping Factor (λ)", 0.6, 1.0, 0.85)
+
+# Monte Carlo
+simulations = st.sidebar.slider("Simulation Runs", 100, 3000, 500)
+
+volatility = st.sidebar.slider("Volatility (%)", 1, 30, 12) / 100
 
 run_button = st.sidebar.button("Run Simulation")
 
+st.sidebar.caption("Default values reflect a high-growth digital platform scenario.")
+
 # -----------------------------
-# CORE PROJECTION ENGINE (KEY)
+# CORE PROJECTION ENGINE
 # -----------------------------
 
-def project_fcf(start_fcf, growth, terminal_growth, years, damping=0.85):
+def project_fcf(start_fcf, growth, terminal_growth, years, damping):
     fcf_list = []
     current_fcf = start_fcf
 
     for t in range(1, years + 1):
-        # 🔥 Growth convergence (like Excel)
+        # Growth convergence (key fix)
         adjusted_growth = terminal_growth + (growth - terminal_growth) * (damping ** t)
-
         current_fcf = current_fcf * (1 + adjusted_growth)
         fcf_list.append(current_fcf)
 
@@ -66,7 +77,7 @@ def compute_terminal_value(last_fcf, wacc, terminal_growth, years):
 try:
     fcf_history = list(map(float, fcf_input.split(",")))
 except:
-    st.error("Invalid FCF input")
+    st.error("Invalid FCF input format")
     st.stop()
 
 growth_rates = [
@@ -75,6 +86,8 @@ growth_rates = [
 ]
 
 base_growth = np.mean(growth_rates)
+
+# Cap excessive growth
 base_growth = min(base_growth, 0.25)
 
 # Blend ML + DCF
@@ -84,13 +97,13 @@ ml_growth = 0.5 * base_growth + 0.5 * growth_rate
 # VALUATIONS
 # -----------------------------
 
-# DCF (now corrected)
-dcf_fcf = project_fcf(initial_fcf, growth_rate, terminal_growth, years)
+# DCF
+dcf_fcf = project_fcf(initial_fcf, growth_rate, terminal_growth, years, damping)
 dcf_val = discounted_value(dcf_fcf, wacc)
 dcf_val += compute_terminal_value(dcf_fcf[-1], wacc, terminal_growth, years)
 
-# ML (same engine, different growth)
-ml_fcf = project_fcf(initial_fcf, ml_growth, terminal_growth, years)
+# ML
+ml_fcf = project_fcf(initial_fcf, ml_growth, terminal_growth, years, damping)
 ml_val = discounted_value(ml_fcf, wacc)
 ml_val += compute_terminal_value(ml_fcf[-1], wacc, terminal_growth, years)
 
@@ -108,7 +121,7 @@ st.write(f"📊 ML Growth Rate: {ml_growth:.2%}")
 st.write(f"📉 DCF vs ML Difference: {(dcf_val - ml_val)/dcf_val:.2%}")
 
 # -----------------------------
-# FCF TABLE
+# CASH FLOW TABLE
 # -----------------------------
 
 st.subheader("📈 Projected Cash Flows")
@@ -122,7 +135,7 @@ df = pd.DataFrame({
 st.dataframe(df)
 
 # -----------------------------
-# MONTE CARLO
+# MONTE CARLO SIMULATION
 # -----------------------------
 
 @st.cache_data
@@ -155,13 +168,29 @@ if run_button:
     col4.metric("5th Percentile", f"{p5:,.2f}")
     col5.metric("95th Percentile", f"{p95:,.2f}")
 
+    st.subheader("📊 Valuation Distribution")
+
     fig, ax = plt.subplots()
     ax.hist(results, bins=30)
     ax.axvline(mean_val)
     ax.axvline(p5)
     ax.axvline(p95)
 
+    ax.set_xlabel("Valuation")
+    ax.set_ylabel("Frequency")
+
     st.pyplot(fig)
 
+    st.subheader("🧠 Interpretation")
+
+    st.write(f"""
+    - Mean valuation: {mean_val:,.2f}
+    - Downside risk (5th percentile): {p5:,.2f}
+    - Upside potential (95th percentile): {p95:,.2f}
+
+    Valuation reflects uncertainty under stochastic cash flow scenarios,
+    with growth converging toward long-term economic expectations.
+    """)
+
 else:
-    st.info("Click 'Run Simulation'")
+    st.info("Click 'Run Simulation' to generate Monte Carlo results.")
